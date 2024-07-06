@@ -1,0 +1,57 @@
+services:
+  traefik:
+    image: traefik:3.0.4
+    env_file:
+      - .env
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+    labels:
+      - "traefik.http.routers.api.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.api.service=api@internal"
+      - "traefik.http.routers.api.entrypoints=web"
+
+  guacd:
+    image: guacamole/guacd
+    container_name: guacd
+    env_file:
+      - .env
+
+  guacamole:
+    image: guacamole/guacamole
+    container_name: guacamole
+    env_file:
+      - .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.guacamole.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.guacamole.entrypoints=web"
+      - "traefik.http.routers.guacamole.entrypoints=websecure"
+      - "traefik.http.routers.guacamole.tls.certresolver=letsencrypt"
+      - "traefik.docker.network=web"
+    depends_on:
+      - guacd
+      - mysql
+
+  mysql:
+    image: mysql:5.7
+    container_name: mysql
+    env_file:
+      - .env
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
