@@ -1,0 +1,128 @@
+#!/bin/bash
+
+sudo apt-get DPkg::Lock::Timeout=60 update && sudo apt-get DPkg::Lock::Timeout=60 upgrade -y
+
+# Install required dependencies
+sudo apt-get DPkg::Lock::Timeout=60 install -y build-essential libcairo2-dev libjpeg-turbo8-dev libpng-dev libtool-bin libossp-uuid-dev \
+    libvncserver-dev freerdp2-dev libpango1.0-dev libssh2-1-dev libtelnet-dev libssl-dev libvorbis-dev \
+    libwebp-dev libpulse-dev libpcap-dev libfreerdp-client2-2 libwebsockets-dev tomcat9 tomcat9-admin tomcat9-common \
+    ghostscript jq wget curl
+
+# Add sudo user
+sudo_username=${sudo_username}
+sudo_password=${sudo_password}
+
+# Add sudo user
+adduser --disabled-password --gecos "" ${sudo_username}
+echo "${sudo_username}:${sudo_password}" | chpasswd
+usermod -aG sudo ${sudo_username}
+mkdir -p /home/${sudo_username}/.ssh
+cp /root/.ssh/authorized_keys /home/${sudo_username}/.ssh/
+chown -R ${sudo_username}:${sudo_username} /home/${sudo_username}/.ssh
+chmod 700 /home/${sudo_username}/.ssh
+chmod 600 /home/${sudo_username}/.ssh/authorized_keys
+
+cd /home/${sudo_username}
+
+# Enable password authentication for SSH
+sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+systemctl restart sshd
+
+# Install Docker
+sudo apt-get DPkg::Lock::Timeout=60 install -y docker.io docker-compose
+sudo systemctl start docker
+sudo systemctl enable docker
+
+sudo usermod -aG docker ${sudo_username}
+
+# Install Certbot
+apt-get DPkg::Lock::Timeout=60 install -y certbot
+
+# Obtain SSL certificate using Certbot
+sudo certbot certonly --standalone --non-interactive --agree-tos --email ${letsencrypt_email} -d ${domain_name} -d ${traefik_domain_name}
+
+# Setup UFW
+ufw allow OpenSSH
+ufw allow 80
+ufw allow 443
+ufw allow 22
+ufw allow 2222
+ufw allow 8080
+ufw --force enable
+
+
+# Set up Git configuration with personal access token
+sudo -u ${sudo_username} -H sh -c "git config --global credential.helper store"
+echo "https://${repo_access_token}:x-oauth-basic@github.com" > /home/${sudo_username}/.git-credentials
+chown ${sudo_username}:${sudo_username} /home/${sudo_username}/.git-credentials
+chmod 600 /home/${sudo_username}/.git-credentials
+
+# Clone GitHub repo and run docker-compose
+sudo -u ${sudo_username} -H sh -c "git clone ${repo_url} /home/${sudo_username}/${dir_name}"
+WORKING_DIR="/home/${sudo_username}/${docker_compose_file_path}"
+cd $WORKING_DIR
+
+ENV_FILE="WORKING_DIR/.env"
+
+# Create the .env file
+touch "$ENV_FILE"
+
+# Write lines to the .env file
+echo "POSTGRES_DB=${db_name}b" >> "$ENV_FILE"
+echo "POSTGRES_USER=${db_user}" >> "$ENV_FILE"
+echo "POSTGRES_PASSWORD=${db_password}" >> "$ENV_FILE"
+echo "GUACD_HOSTNAME=guacd" >> "$ENV_FILE"
+echo "PGDATA=/var/lib/postgresql/data" >> "$ENV_FILE"
+echo "LETSENCRYPT_EMAIL=${letsencrypt_email}" >> "$ENV_FILE"
+echo "DOMAIN_NAME=${domain_name}" >> "$ENV_FILE"
+echo "TRAEFIK_DOMAIN_NAME=${traefik_domain_name}" >> "$ENV_FILE"
+
+echo ".env file created and populated at $ENV_FILE"
+
+mkdir -p app_data
+touch app_data/.env
+echo "STORAGE_LOCATION=/home/${sudo_username}/${dir_name}" >> app_data/.env
+
+sudo -u ${sudo_username} -H sh -c "touch /home/${sudo_username}/${docker_compose_file_path}/acme.json"
+sudo -u ${sudo_username} -H sh -c "chmod 600 /home/${sudo_username}/${docker_compose_file_path}/acme.json"
+
+# Start Traefik and other services
+sudo -u ${sudo_username} -H sh -c "docker-compose -f ${docker_compose_file_path} up -d"
+
+# Create Traefik configuration
+sudo -u ${sudo_username} -H sh -c 'cat <<EOF > /home/${sudo_username}/${dir_name}/traefik.toml
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+    [entryPoints.web.http.redirections.entryPoint]
+      to = "websecure"
+      scheme = "https"
+
+  [entryPoints.websecure]
+    address = ":443"
+
+[certificatesResolvers]
+  [certificatesResolvers.letsencrypt.acme]
+    email = "${letsencrypt_email}"
+    storage = "acme.json"
+    [certificatesResolvers.letsencrypt.acme.httpChallenge]
+      entryPoint = "web"
+
+[log]
+  level = "INFO"
+
+[accessLog]
+
+[providers.docker]
+
+[[tls.certificates]]
+  certFile = "/etc/letsencrypt/live/${domain_name}/fullchain.pem"
+  keyFile = "/etc/letsencrypt/live/${domain_name}/privkey.pem"
+
+EOF'
+
+# Install Fish shell
+sudo -u ${sudo_username} -H sh -c "sudo apt-get install -y fish"
+
+# Set Fish as the default shell for the current user
+sudo -u ${sudo_username} -H sh -c "chsh -s /usr/bin/fish"

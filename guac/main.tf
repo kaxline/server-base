@@ -19,8 +19,26 @@ terraform {
   }
 }
 
+resource "scaleway_instance_user_data" "main" {
+  server_id = scaleway_instance_server.vps_instance.id
+  key = "cloud-init"
+  value = templatefile("${path.module}/user_data.tftpl", {
+      sudo_username = var.sudo_username
+      sudo_password = var.sudo_password
+      repo_url = var.repo_url
+      repo_access_token = var.repo_access_token
+      domain_name = var.domain_name
+      letsencrypt_email = var.letsencrypt_email
+      guacamole_db = var.guacamole_db
+      guacamole_user = var.guacamole_user
+      guacamole_password = var.guacamole_password
+      dir_name = var.dir_name
+      docker_compose_file_path = var.docker_compose_file_path
+      traefik_domain_name = var.traefik_domain_name
+    })
+}
+
 provider "scaleway" {
-  count             = var.provider == "scaleway" ? 1 : 0
   access_key        = var.scaleway_access_key
   secret_key        = var.scaleway_secret_key
   organization_id   = var.scaleway_organization_id
@@ -29,31 +47,24 @@ provider "scaleway" {
 }
 
 
-provider "digitalocean" {
-  count = var.provider == "digitalocean" ? 1 : 0
-  token = var.do_token
-}
+# provider "digitalocean" {
+#   token = var.do_token
+# }
 
 resource "scaleway_instance_server" "vps_instance" {
-  count       = var.provider == "scaleway" ? 1 : 0
   name        = var.scaleway_name
   image       = var.scaleway_image
   type = var.scaleway_type
+  ip_id = scaleway_instance_ip.public_ip.id
 
-  dynamic_ip_required = true
-  enable_ipv6         = true
+}
 
-  key = var.ssh_key
+resource "scaleway_instance_ip" "public_ip" {}
 
-  user_data = templatefile("user_data.tp1", {
-    env_content = local.env_content
-    sudo_username = var.sudo_username
-    sudo_password = var.sudo_password
-    repo_url = var.repo_url
-    repo_access_token = var.repo_access_token
-    domain_name = var.domain_name
-    letsencrypt_email = var.letsencrypt_email
-  })
+resource "scaleway_instance_ip" "server_ip" {
+  type = "routed_ipv4"
+  zone = "nl-ams-3"
+  project_id = var.scaleway_project_id
 }
 
 provider "cloudflare" {
@@ -62,49 +73,52 @@ provider "cloudflare" {
 
 
 
-resource "digitalocean_droplet" "web" {
-  image  = "ubuntu-24-04-x64"
-  name   = var.do_droplet_name
-  region = var.do_region
-  size   = var.do_size
+# resource "digitalocean_droplet" "web" {
+#   image  = "ubuntu-24-04-x64"
+#   name   = var.do_droplet_name
+#   region = var.do_region
+#   size   = var.do_size
+#
+#   user_data = templatefile("user_data.tftpl", {
+#     sudo_username = var.sudo_username
+#     sudo_password = var.sudo_password
+#     repo_url = var.repo_url
+#     repo_access_token = var.repo_access_token
+#     domain_name = var.domain_name
+#     letsencrypt_email = var.letsencrypt_email
+#   })
+# }
 
-  user_data = templatefile("user_data.tp1", {
-    env_content = local.env_content
-    sudo_username = var.sudo_username
-    sudo_password = var.sudo_password
-    repo_url = var.repo_url
-    repo_access_token = var.repo_access_token
-    domain_name = var.domain_name
-    letsencrypt_email = var.letsencrypt_email
-  })
-}
-
-resource "cloudflare_record" "a_record" {
+resource "cloudflare_record" "a_record_app" {
   zone_id = var.cloudflare_zone_id
   name    = var.domain_name
-  value   = digitalocean_droplet.web.ipv4_address
+  value   = scaleway_instance_ip.server_ip.address
+  type    = "A"
+  ttl     = 1
+}
+
+resource "cloudflare_record" "a_record_traefik" {
+  zone_id = var.cloudflare_zone_id
+  name    = var.traefik_domain_name
+  value   = scaleway_instance_ip.server_ip.address
   type    = "A"
   ttl     = 1
 }
 
 resource "local_file" "env_file" {
-  content  = templatefile("${path.module}/env.tmpl", {
+  content  = templatefile("${path.module}/env.tftpl", {
     db_name     = var.guacamole_db,
     db_user     = var.guacamole_user,
     db_password = var.guacamole_password
-    letsenrypt_email = var.letsencrypt_email
+    letsencrypt_email = var.letsencrypt_email
+    docker_compose_file_path = var.docker_compose_file_path
+    domain_name = var.domain_name
+    traefik_domain_name = var.traefik_domain_name
+    guacamole_db = var.guacamole_db
   })
-  filename = "${path.module}/.env"
+  filename = "/home/${var.sudo_username}/${var.docker_compose_file_path}/.env"
 }
 
-output "droplet_ip" {
-  value = digitalocean_droplet.web.ipv4_address
-}
-
-output "cloudflare_record" {
-  value = cloudflare_record.a_record
-}
-
-locals {
-  env_content = file("./.env")
-}
+# locals {
+#   active_provider = var.active_provider == "scaleway" ? scaleway : digitalocean
+# }

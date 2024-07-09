@@ -1,9 +1,16 @@
 
-variable "provider" {
+variable "active_provider" {
   description = "The cloud provider to use"
   type        = string
   default     = "scaleway"
 }
+
+variable "provider_choice" {
+  description = "The provider to use. Allowed values: scaleway, digitalocean"
+  type        = string
+  default     = "scaleway"
+}
+
 
 variable "scaleway_access_key" {
   description = "The access key for the Scaleway API"
@@ -144,4 +151,9 @@ variable "traefik_domain_name" {
 variable "dir_name" {
     type        = string
     description = "Directory name for the cloned repository"
+}
+
+variable "docker_compose_file_path" {
+    type        = string
+    description = "Path to the docker-compose file"
 }
