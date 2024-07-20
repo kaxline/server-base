@@ -1,0 +1,144 @@
+#!/bin/bash
+
+sudo apt-get -o DPkg::Lock::Timeout=60 update && sudo apt-get -o DPkg::Lock::Timeout=60 upgrade -y
+
+# Install required dependencies
+sudo apt-get -o DPkg::Lock::Timeout=120 install -y build-essential libcairo2-dev libjpeg-turbo8-dev libpng-dev libtool-bin libossp-uuid-dev \
+    libvncserver-dev freerdp2-dev libpango1.0-dev libssh2-1-dev libtelnet-dev libssl-dev libvorbis-dev \
+    libwebp-dev libpulse-dev libpcap-dev libfreerdp-client2-2 libwebsockets-dev \
+    ghostscript jq wget curl fish
+
+# Add sudo user
+sudo_username=${sudo_username}
+sudo_password=${sudo_password}
+
+adduser --disabled-password --gecos "" ${sudo_username}
+echo "${sudo_username}:${sudo_password}" | chpasswd
+usermod -aG sudo ${sudo_username}
+mkdir -p /home/${sudo_username}/.ssh
+cp /root/.ssh/authorized_keys /home/${sudo_username}/.ssh/
+chown -R ${sudo_username}:${sudo_username} /home/${sudo_username}/.ssh
+chmod 700 /home/${sudo_username}/.ssh
+chmod 600 /home/${sudo_username}/.ssh/authorized_keys
+
+cd /home/${sudo_username}
+
+ALLOWED_SUDO_COMMANDS="/usr/bin/tee, /bin/echoe, /bin/cat"
+
+# Backup the sudoers file
+sudo cp /etc/sudoers /etc/sudoers.bak
+
+# Add NOPASSWD directive
+echo "${sudo_username} ALL=(ALL) NOPASSWD: $ALLOWED_SUDO_COMMANDS" | sudo tee -a /etc/sudoers
+
+
+# Enable password authentication for SSH
+sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+systemctl restart sshd
+
+# Install Docker
+sudo apt-get -o DPkg::Lock::Timeout=60 install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+
+sudo usermod -aG docker ${sudo_username}
+
+# Install Docker Compose
+sudo curl -SL https://github.com/docker/compose/releases/download/v2.28.1/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+# Install Certbot
+apt-get -o DPkg::Lock::Timeout=60 install -y certbot
+
+# Obtain SSL certificate using Certbot
+sudo certbot certonly --standalone --non-interactive --agree-tos --email ${letsencrypt_email} -d ${domain_name} -d ${traefik_domain_name}
+
+# Setup UFW
+ufw allow OpenSSH
+ufw allow 80
+ufw allow 443
+ufw allow 22
+ufw allow 2222
+ufw --force enable
+
+
+# Set up Git configuration with personal access token
+sudo -u ${sudo_username} -H sh -c "git config --global credential.helper store"
+echo "https://${repo_access_token}:x-oauth-basic@github.com" > /home/${sudo_username}/.git-credentials
+chown ${sudo_username}:${sudo_username} /home/${sudo_username}/.git-credentials
+chmod 600 /home/${sudo_username}/.git-credentials
+
+# Create and mount external volume resource
+mkdir -p /mnt/app-data
+mount -o discard,defaults,noatime /dev/disk/by-id/scsi-0DO_Volume_app-data /mnt/app-data
+echo '/dev/disk/by-id/scsi-0DO_Volume_app-data /mnt/app-data ext4 defaults,nofail,discard 0 0' >> /etc/fstab
+
+# Clone GitHub repo and run docker-compose
+sudo -u ${sudo_username} -H sh -c "git clone ${repo_url} /home/${sudo_username}/${dir_name}"
+WORKING_DIR="/home/${sudo_username}/${dir_name}/${app_dir_path}"
+cd $WORKING_DIR
+
+ENV_FILE="$WORKING_DIR/.env"
+
+# Create the .env file
+touch "$ENV_FILE"
+
+# Write lines to the .env file
+echo "DOMAIN_NAME"="${domain_name}" >> "$ENV_FILE"
+echo "LETSENCRYPT_EMAIL"="${letsencrypt_email}" >> "$ENV_FILE"
+echo "TRAEFIK_DOMAIN_NAME"="${traefik_domain_name}" >> "$ENV_FILE"
+echo "STORAGE_LOCATION"="/mnt/app-data" >> "$ENV_FILE"
+echo "STORAGE_DIR"="/app/server/storage" >> "$ENV_FILE"
+
+echo ".env file created and populated at $ENV_FILE"
+
+mkdir -p app_data
+touch app_data/.env
+
+sudo -u ${sudo_username} -H sh -c "touch $WORKING_DIR/acme.json"
+sudo -u ${sudo_username} -H sh -c "chmod 600 $WORKING_DIR/acme.json"
+
+# Create Traefik configuration
+sudo cat <<EOF > $WORKING_DIR/traefik.toml
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+    [entryPoints.web.http.redirections.entryPoint]
+      to = "websecure"
+      scheme = "https"
+
+  [entryPoints.websecure]
+    address = ":443"
+
+[certificatesResolvers]
+  [certificatesResolvers.letsencrypt.acme]
+    email = "${letsencrypt_email}"
+    storage = "acme.json"
+    [certificatesResolvers.letsencrypt.acme.httpChallenge]
+      entryPoint = "web"
+
+[log]
+  level = "INFO"
+
+[accessLog]
+
+[providers.docker]
+
+[[tls.certificates]]
+  certFile = "/etc/letsencrypt/live/${domain_name}/fullchain.pem"
+  keyFile = "/etc/letsencrypt/live/${domain_name}/privkey.pem"
+
+EOF
+
+# Start Traefik and other services
+sudo -u ${sudo_username} -H sh -c "docker-compose -f $WORKING_DIR/docker-compose.yml up -d"
+
+
+# Set Fish as the default shell for the current user
+sudo -u ${sudo_username} -H sh -c "echo /usr/bin/fish | sudo tee -a /etc/shells"
+sudo sed -i 's#^\(${sudo_username}:[^:]*:[^:]*:[^:]*:[^:]*:[^:]*:\)/bin/bash$#\1/usr/bin/fish#' /etc/passwd
+# sudo -u ${sudo_username} -H sh -c "sudo chsh -s /usr/bin/fish ${sudo_username}"
+
+# Restore the original sudoers file
+sudo mv /etc/sudoers.bak /etc/sudoers
