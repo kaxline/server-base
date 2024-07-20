@@ -54,6 +54,7 @@ resource "digitalocean_droplet" "web" {
     dir_name = var.dir_name
     app_dir_path = var.app_dir_path
     root_password = var.root_password
+    do_volume_name = var.do_volume_name
   })
 }
 

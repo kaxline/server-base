@@ -70,9 +70,9 @@ chown ${sudo_username}:${sudo_username} /home/${sudo_username}/.git-credentials
 chmod 600 /home/${sudo_username}/.git-credentials
 
 # Create and mount external volume resource
-mkdir -p /mnt/app-data
-mount -o discard,defaults,noatime /dev/disk/by-id/scsi-0DO_Volume_app-data /mnt/app-data
-echo '/dev/disk/by-id/scsi-0DO_Volume_app-data /mnt/app-data ext4 defaults,nofail,discard 0 0' >> /etc/fstab
+mkdir -p /mnt/${do_volume_name}
+mount -o discard,defaults,noatime /dev/disk/by-id/scsi-0DO_Volume_${do_volume_name} /mnt/${do_volume_name}
+echo '/dev/disk/by-id/scsi-0DO_Volume_${do_volume_name} /mnt/${do_volume_name} ext4 defaults,nofail,discard 0 0' >> /etc/fstab
 
 # Clone GitHub repo and run docker-compose
 sudo -u ${sudo_username} -H sh -c "git clone ${repo_url} /home/${sudo_username}/${dir_name}"
@@ -88,7 +88,7 @@ touch "$ENV_FILE"
 echo "DOMAIN_NAME"="${domain_name}" >> "$ENV_FILE"
 echo "LETSENCRYPT_EMAIL"="${letsencrypt_email}" >> "$ENV_FILE"
 echo "TRAEFIK_DOMAIN_NAME"="${traefik_domain_name}" >> "$ENV_FILE"
-echo "STORAGE_LOCATION"="/mnt/app-data" >> "$ENV_FILE"
+echo "STORAGE_LOCATION"="/mnt/${do_volume_name}" >> "$ENV_FILE"
 echo "STORAGE_DIR"="/app/server/storage" >> "$ENV_FILE"
 
 echo ".env file created and populated at $ENV_FILE"
