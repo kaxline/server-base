@@ -58,16 +58,16 @@ resource "digitalocean_droplet" "web" {
   })
 }
 
-resource "digitalocean_volume" "app_data" {
+resource "digitalocean_volume" "journodao_anythingllm_data" {
   size     = 100
   name     = var.do_volume_name
   region   = var.do_region
   initial_filesystem_type = "ext4"
 }
 
-resource "digitalocean_volume_attachment" "app_data_attach" {
+resource "digitalocean_volume_attachment" "journodao_anythingllm_data_attach" {
   droplet_id = digitalocean_droplet.web.id
-  volume_id  = digitalocean_volume.app_data.id
+  volume_id  = digitalocean_volume.journodao_anythingllm_data.id
 }
 
 # resource "vultr_instance" "my_instance" {

@@ -48,7 +48,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /mnt/app-data
+      device: /mnt/journodao-anythingllm-data
 
 networks:
   web:
